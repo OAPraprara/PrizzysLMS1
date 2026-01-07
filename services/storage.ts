@@ -1,267 +1,222 @@
 import { User, Loan, Invite, UserRole, LoanStatus, Currency } from '../types';
+import { initializeApp } from "firebase/app";
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  User as FirebaseUser 
+} from "firebase/auth";
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  addDoc, 
+  updateDoc, 
+  query, 
+  where, 
+  getDocs,
+  arrayUnion
+} from "firebase/firestore";
 
-const USERS_KEY = 'prizzys_users';
-const LOANS_KEY = 'prizzys_loans';
-const INVITES_KEY = 'prizzys_invites';
-const CURRENT_USER_KEY = 'prizzys_current_user';
-
-// --- Initialization & Seeding ---
-
-const seedData = () => {
-  if (!localStorage.getItem(USERS_KEY)) {
-    const admin: User = {
-      id: 'admin-1',
-      name: 'Platform Admin',
-      email: 'admin@prizzys.com',
-      phone: '0000000000',
-      role: UserRole.ADMIN,
-      password: 'password',
-      createdAt: new Date().toISOString(),
-    };
-
-    const loaner: User = {
-      id: 'loaner-1',
-      name: 'John Lender',
-      email: 'loaner@test.com',
-      phone: '08012345678',
-      role: UserRole.LOANER,
-      password: 'password',
-      isAcceptingLoans: true,
-      createdAt: new Date().toISOString(),
-      network: ['loanee-1'],
-    };
-
-    const loanee: User = {
-      id: 'loanee-1',
-      name: 'Jane Borrower',
-      email: 'loanee@test.com',
-      phone: '09087654321',
-      role: UserRole.LOANEE,
-      password: 'password',
-      currency: Currency.NGN,
-      bankAccount: {
-        accountName: 'Jane Doe',
-        accountNumber: '1234567890',
-        bankName: 'Zenith Bank',
-      },
-      createdAt: new Date().toISOString(),
-      network: ['loaner-1'],
-    };
-
-    localStorage.setItem(USERS_KEY, JSON.stringify([admin, loaner, loanee]));
-  }
-
-  if (!localStorage.getItem(LOANS_KEY)) {
-    localStorage.setItem(LOANS_KEY, JSON.stringify([]));
-  }
-  if (!localStorage.getItem(INVITES_KEY)) {
-    localStorage.setItem(INVITES_KEY, JSON.stringify([]));
-  }
+// --- Firebase Configuration ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCnRYCCi7_P9S_3XWfn6uYlkMHJqHAYUoQ",
+  authDomain: "prizzys-lms.firebaseapp.com",
+  projectId: "prizzys-lms",
+  storageBucket: "prizzys-lms.firebasestorage.app",
+  messagingSenderId: "1068442843518",
+  appId: "1:1068442843518:web:db280d1dbc95fcc7e3db2f",
+  measurementId: "G-DY7848HLT3"
 };
 
-seedData();
-
-// --- Helpers ---
-
-const getUsers = (): User[] => JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
-const setUsers = (users: User[]) => localStorage.setItem(USERS_KEY, JSON.stringify(users));
-
-const getLoans = (): Loan[] => JSON.parse(localStorage.getItem(LOANS_KEY) || '[]');
-const setLoans = (loans: Loan[]) => localStorage.setItem(LOANS_KEY, JSON.stringify(loans));
-
-const getInvites = (): Invite[] => JSON.parse(localStorage.getItem(INVITES_KEY) || '[]');
-const setInvites = (invites: Invite[]) => localStorage.setItem(INVITES_KEY, JSON.stringify(invites));
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 // --- Auth Service ---
 
 export const AuthService = {
-  login: (email: string, password: string): User | null => {
-    const users = getUsers();
-    const user = users.find(u => u.email === email && u.password === password);
-    if (user) {
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-      return user;
-    }
-    return null;
+  // Listen for auth state changes (used in App.tsx)
+  subscribe: (callback: (user: User | null) => void) => {
+    return onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      if (firebaseUser) {
+        // Fetch full user profile from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userDoc.exists()) {
+            callback({ id: firebaseUser.uid, ...userDoc.data() } as User);
+          } else {
+            // Edge case: Auth exists but Firestore doc missing
+            callback(null); 
+          }
+        } catch (e) {
+          console.error("Error fetching user profile", e);
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
+    });
   },
 
-  register: (user: Omit<User, 'id' | 'createdAt'>): User => {
-    const users = getUsers();
-    if (users.find(u => u.email === user.email)) {
-      throw new Error('Email already exists');
+  login: async (email: string, password: string): Promise<User> => {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
+    
+    if (!userDoc.exists()) {
+      throw new Error("User profile not found.");
     }
+    
+    return { id: userCredential.user.uid, ...userDoc.data() } as User;
+  },
 
+  register: async (userData: Omit<User, 'id' | 'createdAt'>): Promise<User> => {
+    const userCredential = await createUserWithEmailAndPassword(auth, userData.email, userData.password || 'password123');
+    const uid = userCredential.user.uid;
+    
     const newUser: User = {
-      ...user,
-      id: crypto.randomUUID(),
+      ...userData,
+      id: uid,
       createdAt: new Date().toISOString(),
       network: [],
     };
-
-    // Check for pending invites for this email
-    const invites = getInvites();
-    const myInvites = invites.filter(i => i.email === newUser.email && i.status === 'PENDING');
     
-    // Auto-accept invites logic
-    if (newUser.role === UserRole.LOANEE && myInvites.length > 0) {
-      const loanerIdsToConnect = myInvites.map(i => i.loanerId);
-      
-      // Update new user's network
-      newUser.network = loanerIdsToConnect;
+    // Don't store password in Firestore
+    const { password, ...userToStore } = newUser;
 
-      // Update loaners' networks
-      const updatedUsers = users.map(u => {
-        if (loanerIdsToConnect.includes(u.id)) {
-           return { ...u, network: [...(u.network || []), newUser.id] };
-        }
-        return u;
-      });
-      
-      // Mark invites accepted
-      const updatedInvites = invites.map(i => {
-         if (i.email === newUser.email) return { ...i, status: 'ACCEPTED' as const };
-         return i;
-      });
-      setInvites(updatedInvites);
-      setUsers([...updatedUsers, newUser]); // Add new user to the updated list
-    } else {
-      setUsers([...users, newUser]);
-    }
+    // Save to Firestore
+    await setDoc(doc(db, "users", uid), userToStore);
 
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
     return newUser;
   },
 
-  logout: () => {
-    localStorage.removeItem(CURRENT_USER_KEY);
-  },
-
-  getCurrentUser: (): User | null => {
-    const stored = localStorage.getItem(CURRENT_USER_KEY);
-    return stored ? JSON.parse(stored) : null;
-  },
-  
-  updateUser: (updatedUser: User) => {
-    const users = getUsers();
-    const newUsers = users.map(u => u.id === updatedUser.id ? updatedUser : u);
-    setUsers(newUsers);
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+  logout: async () => {
+    await signOut(auth);
   }
 };
 
 // --- Loan Service ---
 
 export const LoanService = {
-  requestLoan: (loan: Omit<Loan, 'id' | 'status' | 'requestDate'>): Loan => {
-    const loans = getLoans();
-    const newLoan: Loan = {
+  requestLoan: async (loan: Omit<Loan, 'id' | 'status' | 'requestDate'>): Promise<Loan> => {
+    const newLoanData = {
       ...loan,
-      id: crypto.randomUUID(),
       status: LoanStatus.REQUESTED,
       requestDate: new Date().toISOString(),
     };
-    setLoans([newLoan, ...loans]);
-    return newLoan;
+    
+    const docRef = await addDoc(collection(db, "loans"), newLoanData);
+    
+    return { ...newLoanData, id: docRef.id } as Loan;
   },
 
-  updateLoan: (loan: Loan) => {
-    const loans = getLoans();
-    const newLoans = loans.map(l => l.id === loan.id ? loan : l);
-    setLoans(newLoans);
+  updateLoan: async (loan: Loan) => {
+    const loanRef = doc(db, "loans", loan.id);
+    await updateDoc(loanRef, { ...loan });
   },
 
-  getLoansForUser: (userId: string, role: UserRole): Loan[] => {
-    const loans = getLoans();
-    if (role === UserRole.ADMIN) return loans;
-    if (role === UserRole.LOANER) return loans.filter(l => l.loanerId === userId);
-    return loans.filter(l => l.loaneeId === userId);
+  getLoansForUser: async (userId: string, role: UserRole): Promise<Loan[]> => {
+    const loansRef = collection(db, "loans");
+    let q;
+
+    if (role === UserRole.ADMIN) {
+      q = query(loansRef);
+    } else if (role === UserRole.LOANER) {
+      q = query(loansRef, where("loanerId", "==", userId));
+    } else {
+      q = query(loansRef, where("loaneeId", "==", userId));
+    }
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Loan))
+      // Sort locally for now: newest first
+      .sort((a, b) => new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime());
   },
 };
 
 // --- Network Service ---
 
 export const NetworkService = {
-  sendInvite: (loanerId: string, loanerName: string, email: string) => {
-    const invites = getInvites();
-    if (invites.find(i => i.email === email && i.loanerId === loanerId)) {
-      throw new Error('Invite already sent');
+  sendInvite: async (loanerId: string, loanerName: string, email: string) => {
+    // Check for existing invite
+    const q = query(
+      collection(db, "invites"), 
+      where("email", "==", email), 
+      where("loanerId", "==", loanerId),
+      where("status", "==", "PENDING")
+    );
+    const existing = await getDocs(q);
+    if (!existing.empty) {
+      throw new Error('Invite already pending for this email.');
     }
 
-    const newInvite: Invite = {
-      id: crypto.randomUUID(),
+    const newInvite = {
       loanerId,
       loanerName,
       email,
       status: 'PENDING',
     };
-    setInvites([...invites, newInvite]);
-
-    // Check if user already exists
-    const users = getUsers();
-    const existingUser = users.find(u => u.email === email && u.role === UserRole.LOANEE);
     
-    if (existingUser) {
-        // Connect them immediately
-        newInvite.status = 'ACCEPTED'; // Update local obj to reflect, but we need to save connection
-        
-        // Update both networks
-        const updatedUsers = users.map(u => {
-            if (u.id === loanerId) {
-                return { ...u, network: Array.from(new Set([...(u.network || []), existingUser.id])) };
-            }
-            if (u.id === existingUser.id) {
-                return { ...u, network: Array.from(new Set([...(u.network || []), loanerId])) };
-            }
-            return u;
-        });
-        setUsers(updatedUsers);
-        
-        // Update invites storage
-        const updatedInvites = getInvites().map(i => i.id === newInvite.id ? { ...i, status: 'ACCEPTED' as const } : i);
-        // We actually just added newInvite to state but haven't saved the 'ACCEPTED' version yet properly in this flow
-        // To be safe, let's just save the invite as Pending first, then if user exists, update everything.
-        // Simplifying for this sync mock:
-        // (Logic handled above effectively)
-    }
+    await addDoc(collection(db, "invites"), newInvite);
   },
 
-  getNetworkMembers: (userId: string): User[] => {
-    const users = getUsers();
-    const currentUser = users.find(u => u.id === userId);
-    if (!currentUser || !currentUser.network) return [];
+  getNetworkMembers: async (userId: string): Promise<User[]> => {
+    // 1. Get current user to see network IDs
+    const userDoc = await getDoc(doc(db, "users", userId));
+    if (!userDoc.exists()) return [];
     
-    return users.filter(u => currentUser.network?.includes(u.id));
+    const userData = userDoc.data() as User;
+    const networkIds = userData.network || [];
+
+    if (networkIds.length === 0) return [];
+
+    // 2. Fetch users. 'in' query supports up to 10 items. 
+    // For robustness in this "Real" app, let's fetch in parallel if list is small, 
+    // or use 'in' chunks. For now, Promise.all is robust enough for typical network sizes.
+    
+    const memberPromises = networkIds.map(nid => getDoc(doc(db, "users", nid)));
+    const memberDocs = await Promise.all(memberPromises);
+    
+    return memberDocs
+      .filter(d => d.exists())
+      .map(d => ({ id: d.id, ...d.data() } as User));
   },
   
-  getPendingInvites: (email: string): Invite[] => {
-      const invites = getInvites();
-      return invites.filter(i => i.email === email && i.status === 'PENDING');
+  getPendingInvites: async (email: string): Promise<Invite[]> => {
+    const q = query(
+      collection(db, "invites"), 
+      where("email", "==", email), 
+      where("status", "==", "PENDING")
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Invite));
   },
   
-  acceptInvite: (inviteId: string, loaneeId: string) => {
-      const invites = getInvites();
-      const invite = invites.find(i => i.id === inviteId);
-      if(!invite) return;
-      
-      const users = getUsers();
-      const updatedUsers = users.map(u => {
-          if (u.id === invite.loanerId) {
-             return { ...u, network: Array.from(new Set([...(u.network || []), loaneeId])) };
-          }
-          if (u.id === loaneeId) {
-              return { ...u, network: Array.from(new Set([...(u.network || []), invite.loanerId])) };
-          }
-          return u;
-      });
-      setUsers(updatedUsers);
-      
-      const updatedInvites = invites.map(i => i.id === inviteId ? { ...i, status: 'ACCEPTED' as const } : i);
-      setInvites(updatedInvites);
-      
-      // Update session if needed
-      const current = AuthService.getCurrentUser();
-      if(current && current.id === loaneeId) {
-          AuthService.login(current.email, current.password || 'password'); // Refresh session data crudely
-      }
+  acceptInvite: async (inviteId: string, loaneeId: string) => {
+    // 1. Get the invite
+    const inviteRef = doc(db, "invites", inviteId);
+    const inviteSnap = await getDoc(inviteRef);
+    if (!inviteSnap.exists()) return;
+    
+    const inviteData = inviteSnap.data() as Invite;
+    
+    // 2. Update both users' network arrays
+    const loanerRef = doc(db, "users", inviteData.loanerId);
+    const loaneeRef = doc(db, "users", loaneeId);
+
+    await updateDoc(loanerRef, {
+      network: arrayUnion(loaneeId)
+    });
+    
+    await updateDoc(loaneeRef, {
+      network: arrayUnion(inviteData.loanerId)
+    });
+    
+    // 3. Update invite status
+    await updateDoc(inviteRef, { status: 'ACCEPTED' });
   }
 };

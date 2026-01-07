@@ -17,7 +17,8 @@ import {
   Menu,
   X,
   Eye,
-  Camera
+  Camera,
+  Loader2
 } from 'lucide-react';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
 
@@ -34,8 +35,6 @@ const calculateInterest = (principal: number, rate: number, requestDate: string)
   if (!rate) return 0;
   const days = differenceInDays(new Date(), parseISO(requestDate));
   if (days <= 0) return 0;
-  // Daily interest = (Principal * Rate) / 365 * days
-  // Rate is annual %
   const dailyRate = rate / 100 / 365;
   return principal * dailyRate * days;
 };
@@ -45,6 +44,7 @@ const calculateInterest = (principal: number, rate: number, requestDate: string)
 // 1. Authentication View
 const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -54,17 +54,17 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
   });
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     
     try {
       if (isLogin) {
-        const user = AuthService.login(formData.email, formData.password);
-        if (user) onLogin(user);
-        else setError('Invalid credentials');
+        const user = await AuthService.login(formData.email, formData.password);
+        // onLogin is handled by the auth subscriber in App
       } else {
-        const user = AuthService.register({
+        const user = await AuthService.register({
           name: formData.name,
           email: formData.email,
           password: formData.password,
@@ -73,10 +73,10 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
           currency: formData.role === UserRole.LOANEE ? Currency.NGN : undefined,
           isAcceptingLoans: formData.role === UserRole.LOANER ? true : undefined,
         });
-        onLogin(user);
       }
     } catch (err: any) {
       setError(err.message);
+      setLoading(false);
     }
   };
 
@@ -130,8 +130,8 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 
-          <Button type="submit" className="w-full" size="lg">
-            {isLogin ? 'Sign In' : 'Create Account'}
+          <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : (isLogin ? 'Sign In' : 'Create Account')}
           </Button>
         </form>
 
@@ -175,7 +175,6 @@ const Layout: React.FC<{
 
   return (
     <div className="min-h-screen bg-dark-900 text-gray-100 flex flex-col md:flex-row">
-      {/* Mobile Header */}
       <div className="md:hidden flex justify-between items-center p-4 border-b border-dark-800 bg-dark-900 sticky top-0 z-40">
         <span className="font-bold text-xl text-prizzys">Prizzys</span>
         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-white">
@@ -183,7 +182,6 @@ const Layout: React.FC<{
         </button>
       </div>
 
-      {/* Sidebar Navigation */}
       <aside className={`
         fixed inset-0 z-30 bg-dark-900 md:static md:w-64 border-r border-dark-800 p-6 flex flex-col
         transition-transform duration-300 md:translate-x-0
@@ -221,7 +219,6 @@ const Layout: React.FC<{
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto">
         <div className="max-w-5xl mx-auto">
           {children}
@@ -236,10 +233,23 @@ const Layout: React.FC<{
 // --- Dashboard View ---
 const Dashboard: React.FC<{ user: User, refresh: () => void }> = ({ user, refresh }) => {
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoans(LoanService.getLoansForUser(user.id, user.role));
-  }, [user, refresh]); // Depend on refresh to reload data
+    let mounted = true;
+    const fetch = async () => {
+        try {
+            const data = await LoanService.getLoansForUser(user.id, user.role);
+            if(mounted) setLoans(data);
+        } finally {
+            if(mounted) setLoading(false);
+        }
+    };
+    fetch();
+    return () => { mounted = false; };
+  }, [user, refresh]);
+
+  if(loading) return <div className="p-8 text-center text-gray-500">Loading dashboard...</div>;
 
   const activeLoans = loans.filter(l => l.status === LoanStatus.ACTIVE || l.status === LoanStatus.REPAYMENT_SUBMITTED);
   const pendingRequests = loans.filter(l => l.status === LoanStatus.REQUESTED);
@@ -251,7 +261,6 @@ const Dashboard: React.FC<{ user: User, refresh: () => void }> = ({ user, refres
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Dashboard</h2>
       
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-6 border-l-4 border-prizzys">
           <h3 className="text-gray-400 text-sm font-medium">Active Loans Value</h3>
@@ -269,19 +278,32 @@ const Dashboard: React.FC<{ user: User, refresh: () => void }> = ({ user, refres
         </Card>
       </div>
 
-      {/* Actionable Items Section for Loanee */}
-      {user.role === UserRole.LOANEE && pendingConfirmations.length > 0 && (
-         <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-yellow-500 flex items-center gap-2">
-               <Bell size={20} /> Action Required: Confirm Receipt
-            </h3>
-            {pendingConfirmations.map(loan => (
-               <LoanCard key={loan.id} loan={loan} user={user} onUpdate={refresh} />
-            ))}
-         </div>
+      {user.role === UserRole.LOANEE && (
+        <div className="space-y-6">
+            {pendingConfirmations.length > 0 && (
+                <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-yellow-500 flex items-center gap-2">
+                    <Bell size={20} /> Action Required: Confirm Receipt
+                    </h3>
+                    {pendingConfirmations.map(loan => (
+                    <LoanCard key={loan.id} loan={loan} user={user} onUpdate={refresh} />
+                    ))}
+                </div>
+            )}
+
+            {pendingRequests.length > 0 && (
+                <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-gray-400 flex items-center gap-2">
+                    <Clock size={20} /> Awaiting Approval
+                    </h3>
+                    {pendingRequests.map(loan => (
+                    <LoanCard key={loan.id} loan={loan} user={user} onUpdate={refresh} />
+                    ))}
+                </div>
+            )}
+        </div>
       )}
 
-       {/* Actionable Items Section for Loaner */}
        {user.role === UserRole.LOANER && pendingRequests.length > 0 && (
          <div className="space-y-4">
             <h3 className="text-lg font-semibold text-prizzys flex items-center gap-2">
@@ -302,8 +324,9 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
   const [actionType, setActionType] = useState<'APPROVE' | 'REPAY' | 'CLEAR' | 'CONFIRM_RECEIPT' | null>(null);
   const [proofImage, setProofImage] = useState('');
   const [interestRate, setInterestRate] = useState(0);
+  const [loading, setLoading] = useState(false);
 
-  const handleAction = () => {
+  const handleAction = async () => {
     let updatedLoan = { ...loan };
 
     if (actionType === 'APPROVE') {
@@ -325,9 +348,16 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
        updatedLoan.clearedDate = new Date().toISOString();
     }
 
-    LoanService.updateLoan(updatedLoan);
-    setModalOpen(false);
-    onUpdate();
+    setLoading(true);
+    try {
+        await LoanService.updateLoan(updatedLoan);
+        setModalOpen(false);
+        onUpdate();
+    } catch(e) {
+        alert("Action failed. Please try again.");
+    } finally {
+        setLoading(false);
+    }
   };
 
   const statusColors = {
@@ -340,7 +370,6 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
     [LoanStatus.DEFAULTED]: 'red',
   };
 
-  // Status Badge Text Map
   const statusText = {
       [LoanStatus.REQUESTED]: 'Requested',
       [LoanStatus.APPROVED_PENDING_CONFIRMATION]: 'Disbursement Sent - Waiting Confirmation',
@@ -371,7 +400,6 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
         </div>
 
         <div className="flex gap-2">
-            {/* View Proof Button if available */}
             {loan.proofOfDisbursement && (
                 <Button size="sm" variant="secondary" onClick={() => {
                     const win = window.open();
@@ -381,7 +409,6 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
                 </Button>
             )}
 
-          {/* Loaner Actions */}
           {user.role === UserRole.LOANER && loan.status === LoanStatus.REQUESTED && (
             <Button size="sm" onClick={() => { setActionType('APPROVE'); setModalOpen(true); }}>Approve & Pay</Button>
           )}
@@ -389,7 +416,6 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
             <Button size="sm" onClick={() => { setActionType('CLEAR'); setModalOpen(true); }}>Clear Loan</Button>
           )}
 
-          {/* Loanee Actions */}
           {user.role === UserRole.LOANEE && loan.status === LoanStatus.APPROVED_PENDING_CONFIRMATION && (
               <Button size="sm" variant="primary" onClick={() => { setActionType('CONFIRM_RECEIPT'); setModalOpen(true); }}>
                   <CheckCircle size={16} className="mr-1"/> Confirm Receipt
@@ -460,8 +486,8 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
               </div>
           )}
 
-          <Button className="w-full" onClick={handleAction}>
-            {actionType === 'CONFIRM_RECEIPT' ? 'Yes, Funds Received' : 'Confirm'}
+          <Button className="w-full" onClick={handleAction} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : (actionType === 'CONFIRM_RECEIPT' ? 'Yes, Funds Received' : 'Confirm')}
           </Button>
         </div>
       </Modal>
@@ -472,43 +498,62 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
 const LoansView: React.FC<{ user: User }> = ({ user }) => {
     const [loans, setLoans] = useState<Loan[]>([]);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [loading, setLoading] = useState(true);
     const refresh = () => setRefreshTrigger(p => p + 1);
 
     useEffect(() => {
-        setLoans(LoanService.getLoansForUser(user.id, user.role));
+        let mounted = true;
+        const fetch = async () => {
+            try {
+                const data = await LoanService.getLoansForUser(user.id, user.role);
+                if(mounted) setLoans(data);
+            } finally {
+                if(mounted) setLoading(false);
+            }
+        };
+        fetch();
+        return () => { mounted = false };
     }, [user, refreshTrigger]);
 
-    // Request Loan Modal Logic
     const [isRequestOpen, setRequestOpen] = useState(false);
+    const [requestLoading, setRequestLoading] = useState(false);
     const [requestData, setRequestData] = useState({ amount: '', dueDate: '', loanerId: '' });
     
-    // Get Loaners for dropdown (if user is Loanee)
     const [myLoaners, setMyLoaners] = useState<User[]>([]);
     useEffect(() => {
-        if (user.role === UserRole.LOANEE) {
-            const network = NetworkService.getNetworkMembers(user.id);
-            // Filter loaners who are accepting loans
-            setMyLoaners(network.filter(u => u.isAcceptingLoans));
-        }
+        const fetchNetwork = async () => {
+            if (user.role === UserRole.LOANEE) {
+                const network = await NetworkService.getNetworkMembers(user.id);
+                setMyLoaners(network.filter(u => u.isAcceptingLoans));
+            }
+        };
+        fetchNetwork();
     }, [user]);
 
-    const handleRequest = () => {
+    const handleRequest = async () => {
         if (!requestData.loanerId || !requestData.amount || !requestData.dueDate) return;
         
+        setRequestLoading(true);
         const selectedLoaner = myLoaners.find(l => l.id === requestData.loanerId);
 
-        LoanService.requestLoan({
-            loaneeId: user.id,
-            loaneeName: user.name,
-            loanerId: requestData.loanerId,
-            loanerName: selectedLoaner?.name || 'Unknown',
-            amount: Number(requestData.amount),
-            currency: user.currency || Currency.NGN,
-            dueDate: requestData.dueDate,
-            interestRate: 0, // Set by loaner later
-        });
-        setRequestOpen(false);
-        refresh();
+        try {
+            await LoanService.requestLoan({
+                loaneeId: user.id,
+                loaneeName: user.name,
+                loanerId: requestData.loanerId,
+                loanerName: selectedLoaner?.name || 'Unknown',
+                amount: Number(requestData.amount),
+                currency: user.currency || Currency.NGN,
+                dueDate: requestData.dueDate,
+                interestRate: 0,
+            });
+            setRequestOpen(false);
+            refresh();
+        } catch(e) {
+            alert("Error requesting loan");
+        } finally {
+            setRequestLoading(false);
+        }
     };
 
     return (
@@ -523,11 +568,9 @@ const LoansView: React.FC<{ user: User }> = ({ user }) => {
             </div>
 
             <div className="space-y-4">
-                {loans.length === 0 ? (
-                    <p className="text-gray-500 text-center py-8">No loans found.</p>
-                ) : (
-                    loans.map(loan => <LoanCard key={loan.id} loan={loan} user={user} onUpdate={refresh} />)
-                )}
+                {loading && <p className="text-gray-500">Loading loans...</p>}
+                {!loading && loans.length === 0 && <p className="text-gray-500 text-center py-8">No loans found.</p>}
+                {!loading && loans.map(loan => <LoanCard key={loan.id} loan={loan} user={user} onUpdate={refresh} />)}
             </div>
 
             <Modal isOpen={isRequestOpen} onClose={() => setRequestOpen(false)} title="Request a Loan">
@@ -559,7 +602,9 @@ const LoansView: React.FC<{ user: User }> = ({ user }) => {
                         onChange={e => setRequestData({...requestData, dueDate: e.target.value})}
                     />
                     
-                    <Button className="w-full" onClick={handleRequest} disabled={!requestData.loanerId}>Submit Request</Button>
+                    <Button className="w-full" onClick={handleRequest} disabled={!requestData.loanerId || requestLoading}>
+                        {requestLoading ? <Loader2 className="animate-spin" /> : 'Submit Request'}
+                    </Button>
                 </div>
             </Modal>
         </div>
@@ -571,17 +616,21 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
     const [network, setNetwork] = useState<User[]>([]);
     const [inviteEmail, setInviteEmail] = useState('');
     const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
-    
-    // For Loanee: Pending incoming invites
     const [myPendingInvites, setMyPendingInvites] = useState<Invite[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const refresh = () => {
-        setNetwork(NetworkService.getNetworkMembers(user.id));
-        if (user.role === UserRole.LOANER) {
-             // In a real app we'd query sent invites
-        }
-        if (user.role === UserRole.LOANEE) {
-            setMyPendingInvites(NetworkService.getPendingInvites(user.email));
+    const refresh = async () => {
+        setLoading(true);
+        try {
+            const members = await NetworkService.getNetworkMembers(user.id);
+            setNetwork(members);
+            
+            if (user.role === UserRole.LOANEE) {
+                const invites = await NetworkService.getPendingInvites(user.email);
+                setMyPendingInvites(invites);
+            }
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -589,9 +638,9 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
         refresh();
     }, [user]);
 
-    const handleInvite = () => {
+    const handleInvite = async () => {
         try {
-            NetworkService.sendInvite(user.id, user.name, inviteEmail);
+            await NetworkService.sendInvite(user.id, user.name, inviteEmail);
             alert("Invite sent!");
             setInviteEmail('');
             refresh();
@@ -600,11 +649,16 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
         }
     };
 
-    const handleAccept = (inviteId: string) => {
-        NetworkService.acceptInvite(inviteId, user.id);
-        refresh();
-        // Force full app refresh to update context if needed (handled by state update usually)
-        window.location.reload(); 
+    const handleAccept = async (inviteId: string) => {
+        try {
+            await NetworkService.acceptInvite(inviteId, user.id);
+            refresh();
+            // Force reload to update user context in App if necessary, 
+            // though Firestore listener in App should pick up user change if we updated the User doc.
+            // Since acceptInvite updates the user doc, the App listener will fire.
+        } catch(e) {
+            alert("Error accepting invite");
+        }
     };
 
     return (
@@ -613,7 +667,6 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
                 {user.role === UserRole.LOANER ? 'My Borrowers' : 'My Lenders'}
              </h2>
 
-            {/* Invite Section (Loaner Only) */}
             {user.role === UserRole.LOANER && (
                 <Card className="p-4 mb-6">
                     <h3 className="text-lg font-medium text-white mb-4">Invite New Borrower</h3>
@@ -628,7 +681,6 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
                 </Card>
             )}
 
-            {/* Pending Invites (Loanee Only) */}
             {user.role === UserRole.LOANEE && myPendingInvites.length > 0 && (
                 <Card className="p-4 mb-6 border-prizzys">
                     <h3 className="text-lg font-medium text-prizzys mb-2">Pending Invites</h3>
@@ -643,10 +695,10 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
                 </Card>
             )}
 
-            {/* Network List */}
             <div className="grid gap-4">
-                {network.length === 0 && <p className="text-gray-500">Your network is empty.</p>}
-                {network.map(member => (
+                {loading && <p className="text-gray-500">Loading network...</p>}
+                {!loading && network.length === 0 && <p className="text-gray-500">Your network is empty.</p>}
+                {!loading && network.map(member => (
                     <Card key={member.id} className="p-4 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-dark-700 flex items-center justify-center text-white font-bold">
@@ -660,7 +712,6 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
                         </div>
                         {user.role === UserRole.LOANER && (
                             <div className="text-right">
-                                {/* Future: View Stats specific to this borrower */}
                                 <Badge color="green">Active</Badge>
                             </div>
                         )}
@@ -753,26 +804,40 @@ const ProfileView: React.FC<{ user: User }> = ({ user }) => {
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [currentView, setCurrentView] = useState<View>('DASHBOARD');
   // Simple hack to trigger refreshes across components
   const [refreshKey, setRefreshKey] = useState(0); 
 
   useEffect(() => {
-    const storedUser = AuthService.getCurrentUser();
-    if (storedUser) setUser(storedUser);
+    // Subscribe to Firebase Auth changes
+    const unsubscribe = AuthService.subscribe((u) => {
+        setUser(u);
+        setAuthLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleLogin = (u: User) => {
-    setUser(u);
+    // Note: The auth subscriber will actually handle the state update
+    // But we can set view to dashboard
     setCurrentView('DASHBOARD');
   };
 
-  const handleLogout = () => {
-    AuthService.logout();
+  const handleLogout = async () => {
+    await AuthService.logout();
     setUser(null);
   };
 
   const forceRefresh = () => setRefreshKey(k => k + 1);
+
+  if (authLoading) {
+      return (
+          <div className="min-h-screen bg-dark-900 flex items-center justify-center text-white">
+              <Loader2 className="animate-spin text-prizzys" size={48} />
+          </div>
+      );
+  }
 
   if (!user) {
     return <AuthView onLogin={handleLogin} />;
