@@ -51,6 +51,7 @@ export interface Loan {
   requestDate: string;
   dueDate: string;
   interestRate: number; // Annual %
+  approvalDate?: string;
   proofOfDisbursement?: string; // Base64 image string
   proofOfRepayment?: string; // Base64 image string
   clearedDate?: string;

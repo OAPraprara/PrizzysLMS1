@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Loan, UserRole, LoanStatus, Currency, Invite } from './types';
 import { AuthService, LoanService, NetworkService } from './services/storage';
 import { Button, Card, Input as CommonInput, Select, Badge, Modal, FileUpload } from './components/Common';
@@ -7,17 +7,14 @@ import {
   Home, 
   Users, 
   Wallet, 
-  Settings, 
   Plus, 
   Bell, 
   User as UserIcon,
   CheckCircle,
-  XCircle,
   Clock,
   Menu,
   X,
   Eye,
-  Camera,
   Loader2
 } from 'lucide-react';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
@@ -62,7 +59,7 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
     try {
       if (isLogin) {
         const user = await AuthService.login(formData.email, formData.password);
-        // onLogin is handled by the auth subscriber in App
+        onLogin(user);
       } else {
         const user = await AuthService.register({
           name: formData.name,
@@ -73,6 +70,7 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
           currency: formData.role === UserRole.LOANEE ? Currency.NGN : undefined,
           isAcceptingLoans: formData.role === UserRole.LOANER ? true : undefined,
         });
+        onLogin(user);
       }
     } catch (err: any) {
       setError(err.message);
@@ -697,7 +695,6 @@ const LoansView: React.FC<{ user: User }> = ({ user }) => {
 const NetworkView: React.FC<{ user: User }> = ({ user }) => {
     const [network, setNetwork] = useState<User[]>([]);
     const [inviteEmail, setInviteEmail] = useState('');
-    const [pendingInvites, setPendingInvites] = useState<Invite[]>([]);
     const [myPendingInvites, setMyPendingInvites] = useState<Invite[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -889,7 +886,7 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [currentView, setCurrentView] = useState<View>('DASHBOARD');
   // Simple hack to trigger refreshes across components
-  const [refreshKey, setRefreshKey] = useState(0); 
+  const [, setRefreshKey] = useState(0); 
 
   useEffect(() => {
     // Subscribe to Firebase Auth changes
@@ -900,7 +897,7 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const handleLogin = (u: User) => {
+  const handleLogin = () => {
     // Note: The auth subscriber will actually handle the state update
     // But we can set view to dashboard
     setCurrentView('DASHBOARD');
