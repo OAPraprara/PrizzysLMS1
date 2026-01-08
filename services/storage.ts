@@ -1,4 +1,5 @@
 import { User, Loan, Invite, UserRole, LoanStatus, Currency } from '../types';
+// @ts-ignore
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 

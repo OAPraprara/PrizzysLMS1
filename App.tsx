@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, Loan, UserRole, LoanStatus, Currency, Invite } from './types';
 import { AuthService, LoanService, NetworkService } from './services/storage';
-import { Button, Card, Input, Select, Badge, Modal, FileUpload } from './components/Common';
+import { Button, Card, Input as CommonInput, Select, Badge, Modal, FileUpload } from './components/Common';
 import { 
   LogOut, 
   Home, 
@@ -80,70 +80,152 @@ const AuthView: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-dark-900 text-white">
-      <Card className="w-full max-w-md p-8 border-prizzys/20">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-prizzys mb-2">Prizzys</h1>
-          <p className="text-gray-400">Private Loan Management System</p>
-        </div>
+  // Custom Input for the Auth Screen specific design
+  const AuthInput = ({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) => (
+    <div className="space-y-2">
+      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+        {label}
+      </label>
+      <input 
+        className="w-full bg-[#1a1a1a] text-white rounded-lg px-4 py-3 border border-transparent focus:border-prizzys focus:ring-0 outline-none transition-colors placeholder-gray-600"
+        {...props}
+      />
+    </div>
+  );
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-black text-white font-sans">
+      
+      {/* Header Logo */}
+      <div className="text-center mb-8">
+        <h1 className="text-5xl font-black text-white tracking-tighter mb-2">
+          PRIZZYS<span className="text-prizzys">.</span>
+        </h1>
+        <p className="text-gray-500 text-lg">Private Loan Management</p>
+      </div>
+
+      {/* Auth Card */}
+      <div className="w-full max-w-md bg-[#121212] rounded-2xl p-8 shadow-2xl border border-[#222]">
+        <h2 className="text-2xl font-bold text-white mb-6">
+          {isLogin ? 'Welcome Back' : 'Create Account'}
+        </h2>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
           {!isLogin && (
             <>
-              <Input 
-                placeholder="Full Name" 
+              <AuthInput 
+                label="Full Name"
+                placeholder="John Doe" 
                 value={formData.name} 
                 onChange={e => setFormData({...formData, name: e.target.value})} 
                 required 
               />
-              <Input 
-                placeholder="Phone Number" 
+              <AuthInput 
+                label="Phone Number (Required)"
+                placeholder="+234..." 
                 value={formData.phone} 
                 onChange={e => setFormData({...formData, phone: e.target.value})} 
                 required 
               />
-              <Select 
-                value={formData.role} 
-                onChange={e => setFormData({...formData, role: e.target.value as UserRole})}
-              >
-                <option value={UserRole.LOANEE}>I want to borrow (Loanee)</option>
-                <option value={UserRole.LOANER}>I want to lend (Loaner)</option>
-              </Select>
+              
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  I Want To
+                </label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, role: UserRole.LOANEE})}
+                    className={`h-12 rounded-lg font-bold text-sm transition-all ${
+                      formData.role === UserRole.LOANEE 
+                        ? 'bg-[#1a1a1a] text-white border border-gray-600' // Visual choice: usually primary is selected, but design might imply toggle
+                        : 'bg-[#1a1a1a] text-gray-500 border border-transparent hover:bg-[#222]'
+                    } ${formData.role === UserRole.LOANEE ? '!bg-[#1a1a1a] !border-gray-500' : ''}`}
+                    // Actually, let's match the image: Selected seems to be Orange or Dark depending on state. 
+                    // Let's make "Selected" = Orange.
+                  >
+                    <div 
+                        className={`h-full w-full flex items-center justify-center rounded-lg border-2 ${
+                            formData.role === UserRole.LOANEE 
+                            ? 'bg-[#1a1a1a] border-gray-500 text-white' 
+                            : 'bg-[#1a1a1a] border-transparent text-gray-500'
+                        }`}
+                        onClick={(e) => { e.stopPropagation(); setFormData({...formData, role: UserRole.LOANEE})}}
+                    >
+                        Borrow
+                    </div>
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-4 col-span-2">
+                       <button
+                        type="button"
+                        onClick={() => setFormData({...formData, role: UserRole.LOANEE})}
+                        className={`h-12 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${
+                          formData.role === UserRole.LOANEE 
+                            ? 'bg-prizzys text-white' 
+                            : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#222]'
+                        }`}
+                      >
+                        Borrow
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({...formData, role: UserRole.LOANER})}
+                        className={`h-12 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${
+                          formData.role === UserRole.LOANER 
+                            ? 'bg-prizzys text-white' 
+                            : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#222]'
+                        }`}
+                      >
+                        Lend
+                      </button>
+                  </div>
+                </div>
+              </div>
             </>
           )}
           
-          <Input 
+          <AuthInput 
+            label="Email"
             type="email" 
-            placeholder="Email Address" 
+            placeholder="name@example.com" 
             value={formData.email} 
             onChange={e => setFormData({...formData, email: e.target.value})} 
             required 
           />
-          <Input 
+          <AuthInput 
+            label="Password"
             type="password" 
-            placeholder="Password" 
+            placeholder="••••••••" 
             value={formData.password} 
             onChange={e => setFormData({...formData, password: e.target.value})} 
             required 
           />
 
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {error && <p className="text-red-500 text-sm text-center bg-red-900/20 p-2 rounded border border-red-900/50">{error}</p>}
 
-          <Button type="submit" className="w-full" size="lg" disabled={loading}>
-            {loading ? <Loader2 className="animate-spin" /> : (isLogin ? 'Sign In' : 'Create Account')}
-          </Button>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-prizzys hover:bg-prizzys-hover text-white font-bold h-12 rounded-lg transition-all focus:ring-4 focus:ring-prizzys/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-lg mt-4"
+          >
+            {loading ? <Loader2 className="animate-spin" /> : (isLogin ? 'Sign In' : 'Join Prizzys')}
+          </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-8 text-center">
           <button 
             onClick={() => setIsLogin(!isLogin)}
-            className="text-sm text-gray-400 hover:text-white hover:underline"
+            className="text-gray-400 hover:text-white text-sm transition-colors"
           >
-            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+            {isLogin ? (
+              <span>New here? <span className="text-gray-200 underline decoration-gray-500 underline-offset-4">Create account</span></span>
+            ) : (
+              <span>Already have an account? <span className="text-gray-200 underline decoration-gray-500 underline-offset-4">Sign In</span></span>
+            )}
           </button>
         </div>
-      </Card>
+      </div>
     </div>
   );
 };
@@ -188,7 +270,7 @@ const Layout: React.FC<{
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="hidden md:block mb-8">
-          <h1 className="text-2xl font-bold text-prizzys">Prizzys</h1>
+          <h1 className="text-2xl font-bold text-white tracking-tight">PRIZZYS<span className="text-prizzys">.</span></h1>
           <p className="text-xs text-gray-500 mt-1 uppercase tracking-wider">{user.role}</p>
         </div>
 
@@ -441,7 +523,7 @@ const LoanCard: React.FC<{ loan: Loan; user: User; onUpdate: () => void }> = ({ 
           {actionType === 'APPROVE' && (
             <>
               <p className="text-sm text-gray-400">Set interest rate (0 for interest-free) and upload proof of transfer to the borrower.</p>
-              <Input 
+              <CommonInput 
                 type="number" 
                 label="Annual Interest Rate (%)" 
                 value={interestRate} 
@@ -587,14 +669,14 @@ const LoansView: React.FC<{ user: User }> = ({ user }) => {
                     </Select>
                     {myLoaners.length === 0 && <p className="text-xs text-red-400">You need to be invited by a lender first.</p>}
                     
-                    <Input 
+                    <CommonInput 
                         label={`Amount (${user.currency || 'NGN'})`}
                         type="number"
                         value={requestData.amount}
                         onChange={e => setRequestData({...requestData, amount: e.target.value})}
                     />
                     
-                    <Input 
+                    <CommonInput 
                         label="Promised Repayment Date"
                         type="date"
                         min={format(addDays(new Date(), 1), 'yyyy-MM-dd')}
@@ -671,7 +753,7 @@ const NetworkView: React.FC<{ user: User }> = ({ user }) => {
                 <Card className="p-4 mb-6">
                     <h3 className="text-lg font-medium text-white mb-4">Invite New Borrower</h3>
                     <div className="flex gap-2">
-                        <Input 
+                        <CommonInput 
                             placeholder="Borrower Email Address" 
                             value={inviteEmail}
                             onChange={e => setInviteEmail(e.target.value)}
@@ -833,7 +915,7 @@ const App: React.FC = () => {
 
   if (authLoading) {
       return (
-          <div className="min-h-screen bg-dark-900 flex items-center justify-center text-white">
+          <div className="min-h-screen bg-black flex items-center justify-center text-white">
               <Loader2 className="animate-spin text-prizzys" size={48} />
           </div>
       );
